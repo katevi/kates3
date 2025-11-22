@@ -1,82 +1,50 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	filehandle "kates3/gateway/handlers/file"
+	fileservice "kates3/gateway/service/file"
 	"log"
-	"net/http"
-	"strings"
+	"log/slog"
+	"os"
+
+	"github.com/gin-gonic/gin"
 )
 
-func postFileHandler(w http.ResponseWriter, r *http.Request) {
-	// Only accept POST requests
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Parse JSON body
-	var data map[string]string
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	// Set response type
-	w.Header().Set("Content-Type", "application/json")
-
-	// Send response
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "received",
-		"data":   data["message"],
-	})
-}
-
-func getFileHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	filename := r.URL.Query().Get("filename")
-	if filename == "" {
-		http.Error(w, `{"error": "Filename parameter is required"}`, http.StatusBadRequest)
-		return
-	}
-	fmt.Println("filename = ", filename)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"filename": filename,
-	})
-}
-
-// Main handler that routes requests
-func apiHandler(w http.ResponseWriter, r *http.Request) {
-	// Only handle /api/file path
-	if !strings.HasPrefix(r.URL.Path, "/api/file") {
-		http.NotFound(w, r)
-		return
-	}
-
-	switch r.Method {
-	case "POST":
-		postFileHandler(w, r)
-	case "GET":
-		getFileHandler(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
+const (
+	storageDir = "files"
+)
 
 func main() {
-	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/file", apiHandler)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 
-	log.Println("Server starting on :8080")
-	log.Println("POST /api/file - Upload file")
-	log.Println("GET  /api/file?filename=test.txt - Get file")
+	fileService := fileservice.New(storageDir)
 
-	http.ListenAndServe(":8080", mux)
+	uploadHandler := filehandle.NewUploader(logger, fileService)
+	downloadHandler := filehandle.NewDownloader(logger, fileService)
+
+	router := gin.Default()
+
+	// Middleware
+	router.Use(gin.Recovery())
+	api := router.Group("/api/v1")
+	{
+		api.POST("/upload", uploadHandler.Upload)
+		api.GET("/download/:id", downloadHandler.Download)
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(200, gin.H{"status": "ok"})
+		})
+	}
+
+	// Запуск сервера
+	port := ":8080"
+	addr := fmt.Sprintf("http://localhost%s", port)
+	logger.Debug("Starting server", slog.String("addr", addr))
+
+	if err := router.Run(port); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
