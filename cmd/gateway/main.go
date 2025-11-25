@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
-	filehandle "kates3/gateway/handlers/file"
-	fileservice "kates3/gateway/service/file"
+	filehandle "kates3/internal/gateway/handlers/file"
+	fileservice "kates3/internal/gateway/service/file"
+	"kates3/internal/gateway/storage"
+	"kates3/internal/gateway/storage/registry"
 	"log"
 	"log/slog"
 	"os"
@@ -21,7 +23,21 @@ func main() {
 		Level: slog.LevelDebug,
 	}))
 
-	fileService := fileservice.New(storageDir)
+	storageRegistry := registry.NewSimpleRegistry()
+
+	// Регистрируем 6 mock storage серверов
+	for i := 1; i <= 6; i++ {
+		server := &registry.StorageServer{
+			ID:      fmt.Sprintf("storage%d", i),
+			Address: fmt.Sprintf("localhost:900%d", i),
+			Weight:  1,
+		}
+		storageRegistry.RegisterServer(server)
+	}
+
+	storageClient := storage.NewMockClient()
+
+	fileService := fileservice.NewFileService(logger, storageRegistry, storageClient)
 
 	uploadHandler := filehandle.NewUploader(logger, fileService)
 	downloadHandler := filehandle.NewDownloader(logger, fileService)
